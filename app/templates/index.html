@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<style>
+  .doc-card {
+    padding: 12px;
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 14px;
+    border: 1px solid rgba(0,0,0,0.06);
+    background: #fff;
+    transition: transform .08s ease, box-shadow .08s ease;
+  }
+
+  a.doc-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+  }
+
+  .doc-muted { color: #666; font-size: 13px; }
+  .doc-title { font-weight: 700; }
+  .doc-sub   { color:#666; margin-top: 2px; }
+
+  /* статусы */
+  .doc-work {
+    background: #f7f7f7;
+    border-color: #e7e7e7;
+  }
+  .doc-archived {
+    background: #f2fff3;      /* нежно-зелёный */
+    border-color: #cfe9d2;
+  }
+  .doc-destroyed {
+    background: #fff2f2;      /* нежно-красный */
+    border-color: #f3c0c0;
+  }
+  .doc-destroyed .doc-muted,
+  .doc-destroyed .doc-sub {
+    color: #b94a48;
+    font-weight: 600;
+  }
+
+  .badge-soft {
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: rgba(0,0,0,0.06);
+  }
+</style>
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <div class="fw-semibold fs-4">Документы</div>
+    <div class="text-secondary small">Стадия, номер и тип</div>
+  </div>
+
+  {% if me.role == "clerk" %}
+    <a class="btn btn-dark btn-sm btn-round" href="{{ url_for('main.new_doc') }}">+ Создать</a>
+  {% endif %}
+</div>
+
+
+<!-- ВХОДЯЩИЕ -->
+<div class="card-soft" style="padding:14px; margin-bottom:14px;">
+  <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+    <div style="font-weight:700; font-size:16px;">Входящие</div>
+    <div style="color:#666; font-size:13px;">Документы, которые ждут твоего действия</div>
+  </div>
+
+  {% if inbox_docs and inbox_docs|length > 0 %}
+    <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
+      {% for d in inbox_docs %}
+
+        {% set cls = "doc-work" %}
+        {% if d.stage == "destroyed" %}
+          {% set cls = "doc-destroyed" %}
+        {% elif d.stage in ["archived", "declassified"] %}
+          {% set cls = "doc-archived" %}
+        {% endif %}
+
+        {% if d.stage == "destroyed" %}
+          <div class="doc-card {{ cls }}">
+            <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+              <div>
+                <div class="doc-title">{{ DOC_TYPE_LABELS.get(d.doc_type, d.doc_type) }} № {{ d.reg_number }}</div>
+                <div class="doc-sub">{{ d.title }}</div>
+              </div>
+              <div class="doc-muted" style="white-space:nowrap;">
+                {{ STAGE_LABELS.get(d.stage, d.stage) }}
+              </div>
+            </div>
+          </div>
+        {% else %}
+          <a href="{{ url_for('main.doc_detail', doc_id=d.id) }}" class="doc-card {{ cls }}">
+            <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+              <div>
+                <div class="doc-title">{{ DOC_TYPE_LABELS.get(d.doc_type, d.doc_type) }} № {{ d.reg_number }}</div>
+                <div class="doc-sub">{{ d.title }}</div>
+              </div>
+              <div class="doc-muted" style="white-space:nowrap;">
+                {{ STAGE_LABELS.get(d.stage, d.stage) }}
+              </div>
+            </div>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <div style="margin-top:10px; color:#666;">Пока пусто.</div>
+  {% endif %}
+</div>
+
+
+<!-- ОБЩИЙ СПИСОК -->
+<div class="card-soft" style="padding:14px;">
+  <div style="font-weight:700; font-size:16px; margin-bottom:10px;">Все документы</div>
+
+  {% if docs and docs|length > 0 %}
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      {% for d in docs %}
+
+        {% set cls = "doc-work" %}
+        {% if d.stage == "destroyed" %}
+          {% set cls = "doc-destroyed" %}
+        {% elif d.stage in ["archived", "declassified"] %}
+          {% set cls = "doc-archived" %}
+        {% endif %}
+
+        {% if d.stage == "destroyed" %}
+          <div class="doc-card {{ cls }}">
+            <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+              <div>
+                <div class="doc-title">{{ d.title }}</div>
+                <div class="doc-muted">
+                  {{ DOC_TYPE_LABELS.get(d.doc_type, d.doc_type) }} ·
+                  {{ d.reg_number or "без номера" }} ·
+                  Стадия: {{ STAGE_LABELS.get(d.stage, d.stage) }}
+                </div>
+              </div>
+              <span class="badge-soft">ID {{ d.id }}</span>
+            </div>
+          </div>
+        {% else %}
+          <a class="doc-card {{ cls }}" href="{{ url_for('main.doc_detail', doc_id=d.id) }}">
+            <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+              <div>
+                <div class="doc-title">{{ d.title }}</div>
+                <div class="doc-muted">
+                  {{ DOC_TYPE_LABELS.get(d.doc_type, d.doc_type) }} ·
+                  {{ d.reg_number or "без номера" }} ·
+                  Стадия: {{ STAGE_LABELS.get(d.stage, d.stage) }}
+                </div>
+              </div>
+              <span class="badge-soft">ID {{ d.id }}</span>
+            </div>
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="text-secondary">Пока документов нет.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card-soft" style="padding:16px;">
+  <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+    <div>
+      <div style="font-size:22px; font-weight:700; margin-bottom:6px;">
+        {{ DOC_TYPE_LABELS.get(d.doc_type, d.doc_type) }} № {{ d.reg_number }}
+      </div>
+      <div style="color:#666; margin-bottom:6px;">{{ d.title }}</div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; color:#666; font-size:14px;">
+        {% if d.confidentiality %}
+          <span><b>Гриф:</b> {{ d.confidentiality }}</span>
+        {% endif %}
+        {% if d.created_at %}
+          <span><b>Создан:</b> {{ d.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <a class="btn btn-outline" href="{{ url_for('main.index') }}">К списку</a>
+      <a class="btn btn-primary" href="{{ url_for('main.download_docx', doc_id=d.id) }}">Скачать DOCX</a>
+      {% if me.id == d.created_by_id and d.stage not in ['archived','declassified','destroyed','deleted'] %}
+        <a class="btn btn-outline" href="{{ url_for('main.edit_doc', doc_id=d.id) }}">Редактировать</a>
+      {% endif %}
+
+      {% if me.role == 'auditor' %}
+        <form method="post" action="{{ url_for('main.doc_delete', doc_id=d.id) }}" style="margin:0;">
+            <button class="btn btn-outline" type="submit"
+            onclick="return confirm('Точно удалить документ?');">
+            Удалить
+            </button>
+        </form>
+      {% endif %}
+
+    </div>
+  </div>
+
+  <div style="margin-top:14px;">
+    <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;">
+      <div style="font-weight:600;">
+        Стадия: {{ stage_label }}
+      </div>
+      <div style="color:#666; font-size:14px;">
+        {{ step_now }} / {{ step_total }} ({{ progress }}%)
+      </div>
+    </div>
+
+    <div style="margin-top:8px; background:#eee; border-radius:999px; height:10px; overflow:hidden;">
+      <div style="height:10px; width:{{ progress }}%; background:#111; border-radius:999px;"></div>
+    </div>
+  </div>
+
+  {% if actions and actions|length > 0 %}
+    <div class="mb-2">
+        <div class="fw-semibold">Действия</div>
+
+        {% for a in actions %}
+            <div class="mt-2">
+            <form method="post" action="{{ url_for('main.doc_action', doc_id=d.id, action_id=a.id) }}">
+                <button class="btn btn-primary" type="submit">{{ a.label }}</button>
+            </form>
+
+            {% if a.to_who %}
+                <div class="text-secondary small mt-1">Кому отправляем: {{ a.to_who }} </div>
+            {% endif %}
+            </div>
+        {% endfor %}
+    </div>
+
+  {% endif %}
+
+  <div style="margin-top:18px;">
+  <div style="font-weight:700; margin-bottom:8px;">Содержимое</div>
+
+  <div class="card-soft" style="padding:12px;">
+    <div style="display:grid; gap:8px;">
+      <div><b>Организация:</b> {{ payload.get("org_name") or "не указано" }}</div>
+
+      {% if d.confidentiality %}
+        <div><b>Гриф:</b> {{ d.confidentiality }}</div>
+      {% endif %}
+
+      {% set pos = payload.get("sign_pos") %}
+      {% set name = payload.get("sign_name") %}
+      <div><b>Подписант:</b>
+        {% if pos or name %}
+          {{ (pos or "") }}{% if pos and name %}, {% endif %}{{ (name or "") }}
+        {% else %}
+          не указан
+        {% endif %}
+      </div>
+
+      {% if d.doc_type == 'letter' %}
+        <hr>
+        <div><b>Кому:</b> {{ payload.get("addressee") or "не указано" }}</div>
+        <div><b>Текст письма:</b><br>{{ payload.get("body") or "не заполнено" }}</div>
+      {% endif %}
+
+      {% if d.doc_type == 'instruction' %}
+        <hr>
+        <div><b>Цель:</b><br>{{ payload.get("purpose") or "не заполнено" }}</div>
+        <div><b>Область применения:</b><br>{{ payload.get("scope") or "не заполнено" }}</div>
+
+        <div><b>Порядок действий:</b>
+          {% if ins_steps and ins_steps|length > 0 %}
+            <ol style="margin:6px 0 0 18px;">
+              {% for s in ins_steps %}
+                <li>{{ s }}</li>
+              {% endfor %}
+            </ol>
+          {% else %}
+            <div>не заполнено</div>
+          {% endif %}
+        </div>
+
+        <div><b>Ответственность:</b><br>{{ payload.get("responsibility") or "не заполнено" }}</div>
+      {% endif %}
+
+      {% if d.doc_type == 'packet' %}
+        <hr>
+        <div><b>Состав пакета:</b>
+          {% if pack_items and pack_items|length > 0 %}
+            <ul style="margin:6px 0 0 18px;">
+              {% for x in pack_items %}
+                <li>{{ x }}</li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <div>не заполнено</div>
+          {% endif %}
+        </div>
+
+        <div><b>Примечание:</b><br>{{ payload.get("note") or "не заполнено" }}</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+
+  <div style="margin-top:18px;">
+    <div style="font-weight:700; margin-bottom:8px;">История действий</div>
+
+    {% if history and history|length > 0 %}
+        <div style="display:flex; flex-direction:column; gap:8px;">
+        {% for h in history %}
+            <div class="card-soft" style="padding:10px;">
+            <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                <div style="font-weight:600;">
+                {{ h.action }}
+                <span style="color:#666; font-weight:400;">
+                    ({{ h.actor_name }}{% if h.actor_role %}, {{ h.actor_role }}{% endif %})
+                </span>
+                </div>
+                <div style="color:#666; font-size:14px;">
+                {{ h.at.strftime('%d.%m.%Y %H:%M') if h.at else '' }}
+                </div>
+            </div>
+
+            <div style="color:#666; font-size:14px; margin-top:4px;">
+                {{ h.from }} → {{ h.to }}
+            </div>
+            </div>
+        {% endfor %}
+        </div>
+    {% else %}
+        <div style="color:#666;">Пока пусто.</div>
+    {% endif %}
+</div>
+
+</div>
+
+{% endblock %}

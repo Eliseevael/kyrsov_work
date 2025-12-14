@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="mb-3">
+  <div class="fw-semibold fs-4">Создание документа</div>
+  <div class="text-secondary small">Заполни содержимое, чтобы это был настоящий документ</div>
+</div>
+
+<div class="card-soft p-4" style="max-width: 820px;">
+  {% if error %}
+    <div class="alert alert-danger py-2">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('main.new_doc') }}" class="d-grid gap-3">
+
+    <div class="row g-3">
+      <div class="col-md-4">
+        <div class="small text-secondary mb-1">Тип</div>
+        <select class="form-select" name="doc_type" id="docType" required>
+          <option value="">Выбрать…</option>
+          <option value="letter">Письмо</option>
+          <option value="instruction">Инструкция</option>
+          <option value="packet">Пакет</option>
+        </select>
+      </div>
+      <div class="col-md-8">
+        <div class="small text-secondary mb-1">Название</div>
+        <input class="form-control" name="title" placeholder="Например: Инструкция по учету КД" required>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-md-8">
+        <div class="small text-secondary mb-1">Организация</div>
+        <input class="form-control" name="org_name" placeholder="ООО Ромашка">
+      </div>
+      <div class="col-md-4">
+        <div class="small text-secondary mb-1">Гриф</div>
+        <input class="form-control" name="confidentiality" placeholder="КТ / Конфиденциально">
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="small text-secondary mb-1">Должность подписанта</div>
+        <input class="form-control" name="sign_pos" placeholder="Генеральный директор">
+      </div>
+      <div class="col-md-6">
+        <div class="small text-secondary mb-1">ФИО подписанта</div>
+        <input class="form-control" name="sign_name" placeholder="Иванов И.И.">
+      </div>
+    </div>
+
+    <!-- Блок: Приказ -->
+    <div id="blockOrder" class="card-soft p-3" style="display:none;">
+      <div class="fw-semibold mb-2">Содержимое приказа</div>
+
+      <div class="mb-3">
+        <div class="small text-secondary mb-1">Основание</div>
+        <textarea class="form-control" name="order_basis" rows="2" placeholder="На основании..."></textarea>
+      </div>
+
+      <div class="mb-3">
+        <div class="small text-secondary mb-1">Текст распоряжения (пункты)</div>
+        <textarea class="form-control" name="order_items" rows="6" placeholder="1) ...&#10;2) ...&#10;3) ..."></textarea>
+        <div class="text-secondary small mt-1">Пиши пунктами с новой строки, мы сами красиво пронумеруем.</div>
+      </div>
+
+      <div>
+        <div class="small text-secondary mb-1">Контроль исполнения</div>
+        <input class="form-control" name="order_control" placeholder="Контроль оставляю за собой / Назначить ответственным...">
+      </div>
+    </div>
+
+    <!-- Блок: Инструкция -->
+    <div id="blockInstruction" class="card-soft p-3" style="display:none;">
+      <div class="fw-semibold mb-2">Содержимое инструкции</div>
+
+      <div class="mb-3">
+        <div class="small text-secondary mb-1">Цель</div>
+        <textarea class="form-control" name="ins_purpose" rows="2"></textarea>
+      </div>
+
+      <div class="mb-3">
+        <div class="small text-secondary mb-1">Область применения</div>
+        <textarea class="form-control" name="ins_scope" rows="2"></textarea>
+      </div>
+
+      <div class="mb-3">
+        <div class="small text-secondary mb-1">Порядок действий (по шагам)</div>
+        <textarea class="form-control" name="ins_steps" rows="6" placeholder="1) ...&#10;2) ..."></textarea>
+      </div>
+
+      <div>
+        <div class="small text-secondary mb-1">Ответственность</div>
+        <textarea class="form-control" name="ins_responsibility" rows="3"></textarea>
+      </div>
+    </div>
+
+    <!-- Блок: Пакет -->
+    <div id="blockPacket" class="card-soft p-3" style="display:none;">
+      <div class="fw-semibold mb-2">Содержимое пакета документов</div>
+
+      <div class="mb-3">
+        <div class="small text-secondary mb-1">Состав пакета (список документов)</div>
+        <textarea class="form-control" name="pack_list" rows="6" placeholder="- Договор ...&#10;- Приложение ...&#10;- Акт ..."></textarea>
+      </div>
+
+      <div>
+        <div class="small text-secondary mb-1">Примечание</div>
+        <textarea class="form-control" name="pack_note" rows="2"></textarea>
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <button class="btn btn-dark btn-round">Создать</button>
+      <a class="btn btn-outline-dark btn-round" href="/">Отмена</a>
+    </div>
+  </form>
+</div>
+
+<script>
+  const sel = document.getElementById("docType");
+  const order = document.getElementById("blockOrder");
+  const ins = document.getElementById("blockInstruction");
+  const pack = document.getElementById("blockPacket");
+
+  function syncBlocks(){
+    order.style.display = "none";
+    ins.style.display = "none";
+    pack.style.display = "none";
+    if(sel.value === "order") order.style.display = "block";
+    if(sel.value === "instruction") ins.style.display = "block";
+    if(sel.value === "packet") pack.style.display = "block";
+  }
+  sel.addEventListener("change", syncBlocks);
+  syncBlocks();
+</script>
+
+{% endblock %}

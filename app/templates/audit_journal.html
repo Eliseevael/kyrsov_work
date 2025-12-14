@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<style>
+  .jr-wrap { display:flex; flex-direction:column; gap:12px; }
+
+  .jr-top {
+    display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap;
+    margin-bottom: 6px;
+  }
+  .jr-title { font-weight: 800; font-size: 22px; }
+  .jr-sub { color:#666; font-size: 13px; margin-top: 2px; }
+
+  .jr-search {
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+  .jr-search input{
+    border:1px solid rgba(0,0,0,0.10);
+    border-radius: 12px;
+    padding: 10px 12px;
+    min-width: 260px;
+    outline: none;
+  }
+
+  .jr-card {
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 16px;
+    background:#fff;
+    padding: 14px;
+  }
+
+  .jr-head {
+    display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;
+  }
+  .jr-doc-title { font-weight: 800; font-size: 16px; }
+  .jr-muted { color:#666; font-size: 13px; margin-top: 2px; }
+
+  .jr-pill {
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    border: 1px solid rgba(0,0,0,0.08);
+    background: rgba(0,0,0,0.03);
+    white-space: nowrap;
+  }
+  .jr-pill.done { background:#f2fff3; border-color:#cfe9d2; }
+  .jr-pill.destroyed { background:#fff2f2; border-color:#f3c0c0; color:#b94a48; font-weight:700; }
+  .jr-pill.deleted { background:#f6f6f6; border-color:#e6e6e6; color:#666; font-weight:700; }
+  .jr-pill.work { background:#f7f7f7; border-color:#e7e7e7; }
+
+  .jr-last {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(0,0,0,0.10);
+    display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  }
+  .jr-last b { font-weight: 800; }
+
+  details.jr-details {
+    margin-top: 10px;
+    border-top: 1px dashed rgba(0,0,0,0.10);
+    padding-top: 10px;
+  }
+  details.jr-details summary{
+    cursor:pointer;
+    list-style:none;
+    display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    font-weight: 800;
+  }
+  details.jr-details summary::-webkit-details-marker { display:none; }
+
+  .jr-summary-meta {
+    color:#666; font-size: 12px; font-weight: 600; white-space: nowrap;
+  }
+
+  .jr-timeline { margin-top: 10px; display:flex; flex-direction:column; gap:10px; }
+  .jr-row {
+    display:flex; gap:10px;
+    padding: 10px 10px;
+    border-radius: 12px;
+    background: rgba(0,0,0,0.02);
+    border: 1px solid rgba(0,0,0,0.05);
+  }
+  .jr-time { width: 140px; color:#666; font-size: 12px; font-weight:700; flex: 0 0 auto; }
+  .jr-body { flex: 1 1 auto; }
+  .jr-act { font-weight: 800; }
+  .jr-meta { color:#666; font-size: 12px; margin-top: 2px; }
+</style>
+
+
+<div class="jr-top">
+  <div>
+    <div class="jr-title">Журнал учета</div>
+    <div class="jr-sub">Все действия по документам: кто, что сделал и когда. Сгруппировано по документам.</div>
+  </div>
+
+  <form class="jr-search" method="get" action="{{ url_for('main.journal') }}">
+    <input name="q" value="{{ q }}" placeholder="Поиск: номер или название" />
+    <button class="btn btn-dark btn-sm btn-round" type="submit">Найти</button>
+    {% if q %}
+      <a class="btn btn-light btn-sm btn-round" href="{{ url_for('main.journal') }}">Сброс</a>
+    {% endif %}
+  </form>
+</div>
+
+
+<div class="jr-wrap">
+  {% if docs_log and docs_log|length > 0 %}
+    {% for item in docs_log %}
+      {% set d = item.doc %}
+
+      {% set pill = "work" %}
+      {% if d.stage in ["archived", "declassified"] %}
+        {% set pill = "done" %}
+      {% elif d.stage == "destroyed" %}
+        {% set pill = "destroyed" %}
+      {% elif d.stage == "deleted" %}
+        {% set pill = "deleted" %}
+      {% endif %}
+
+      <div class="jr-card">
+        <div class="jr-head">
+          <div>
+            <div class="jr-doc-title">{{ d.title }}</div>
+            <div class="jr-muted">
+              {{ DOC_TYPE_LABELS.get(d.doc_type, d.doc_type) }} ·
+              {{ d.reg_number or "без номера" }} ·
+              ID {{ d.id }}
+            </div>
+          </div>
+
+          <div class="jr-pill {{ pill }}">
+            {{ STAGE_LABELS.get(d.stage, d.stage) }}
+          </div>
+        </div>
+
+        <div class="jr-last">
+          <div class="jr-muted">
+            <b>Действий:</b> {{ item.count }}
+          </div>
+
+          {% if item.last %}
+            <div class="jr-muted">
+              <b>Последнее:</b>
+              {{ item.last.at.strftime("%d.%m.%Y %H:%M") }} ·
+              {{ item.last.action }} ·
+              {{ item.last.actor_name }}{% if item.last.actor_role %} ({{ item.last.actor_role }}){% endif %}
+            </div>
+          {% endif %}
+        </div>
+
+        {% if item.created %}
+          <details class="jr-details">
+            <summary>
+              <span>{{ item.created.action }}</span>
+              <span class="jr-summary-meta">
+                {{ item.created.at.strftime("%d.%m.%Y %H:%M") }} ·
+                {{ item.created.actor_name }}{% if item.created.actor_role %} ({{ item.created.actor_role }}){% endif %}
+              </span>
+            </summary>
+
+            {% if item.rest and item.rest|length > 0 %}
+              <div class="jr-timeline">
+                {% for e in item.rest %}
+                  <div class="jr-row">
+                    <div class="jr-time">{{ e.at.strftime("%d.%m.%Y %H:%M") }}</div>
+                    <div class="jr-body">
+                      <div class="jr-act">{{ e.action }}</div>
+                      <div class="jr-meta">
+                        {{ e.actor_name }}{% if e.actor_role %} ({{ e.actor_role }}){% endif %}
+                        · {{ e.from }} -> {{ e.to }}
+                      </div>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="jr-muted" style="margin-top:10px;">Пока после создания больше действий нет.</div>
+            {% endif %}
+          </details>
+        {% endif %}
+      </div>
+
+    {% endfor %}
+  {% else %}
+    <div class="jr-card">
+      <div class="jr-muted">Пока записей нет (или не нашлось по фильтру).</div>
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

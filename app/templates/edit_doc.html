@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card-soft">
+  <h2 style="margin:0 0 10px 0;">Редактирование документа</h2>
+
+  <div style="color:#666; font-size:13px; margin-bottom:12px;">
+    Важно: если документ уже проходил этапы, после сохранения он вернётся на начало и будет проходиться заново.
+  </div>
+
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" class="form-grid">
+
+    <div style="grid-column:1 / -1;">
+      <label class="form-label">Тип документа</label>
+      <input class="form-control" value="{{ DOC_TYPE_LABELS.get(d.doc_type, d.doc_type) }}" disabled>
+    </div>
+
+    <div>
+      <label class="form-label">Название</label>
+      <input class="form-control" name="title" required value="{{ d.title or '' }}">
+    </div>
+
+    <div>
+      <label class="form-label">Организация</label>
+      <input class="form-control" name="org_name" value="{{ payload.get('org_name','') }}">
+    </div>
+
+    <div>
+      <label class="form-label">Гриф/отметка</label>
+      <input class="form-control" name="confidentiality" value="{{ d.confidentiality or '' }}">
+    </div>
+
+    <div>
+      <label class="form-label">Должность подписанта</label>
+      <input class="form-control" name="sign_pos" value="{{ payload.get('sign_pos','') }}">
+    </div>
+
+    <div>
+      <label class="form-label">ФИО подписанта</label>
+      <input class="form-control" name="sign_name" value="{{ payload.get('sign_name','') }}">
+    </div>
+
+    {% if d.doc_type == 'letter' %}
+      <div style="grid-column:1 / -1;">
+        <h3 style="margin:10px 0;">Письмо</h3>
+
+        <label class="form-label">Кому</label>
+        <input class="form-control" name="letter_addressee" value="{{ payload.get('addressee','') }}">
+
+        <label class="form-label" style="margin-top:10px;">Текст письма</label>
+        <textarea class="form-control" name="letter_body" rows="8">{{ payload.get('body','') }}</textarea>
+      </div>
+    {% endif %}
+
+    {% if d.doc_type == 'instruction' %}
+      <div style="grid-column:1 / -1;">
+        <h3 style="margin:10px 0;">Инструкция</h3>
+
+        <label class="form-label">Цель</label>
+        <textarea class="form-control" name="ins_purpose" rows="3">{{ payload.get('purpose','') }}</textarea>
+
+        <label class="form-label" style="margin-top:10px;">Область применения</label>
+        <textarea class="form-control" name="ins_scope" rows="3">{{ payload.get('scope','') }}</textarea>
+
+        <label class="form-label" style="margin-top:10px;">Порядок действий (каждый пункт с новой строки)</label>
+        <textarea class="form-control" name="ins_steps" rows="6">{{ payload.get('steps_raw','') }}</textarea>
+
+        <label class="form-label" style="margin-top:10px;">Ответственность</label>
+        <textarea class="form-control" name="ins_responsibility" rows="3">{{ payload.get('responsibility','') }}</textarea>
+      </div>
+    {% endif %}
+
+    {% if d.doc_type == 'packet' %}
+      <div style="grid-column:1 / -1;">
+        <h3 style="margin:10px 0;">Пакет</h3>
+
+        <label class="form-label">Состав пакета (каждый документ с новой строки)</label>
+        <textarea class="form-control" name="pack_list" rows="6">{{ payload.get('list_raw','') }}</textarea>
+
+        <label class="form-label" style="margin-top:10px;">Примечание</label>
+        <textarea class="form-control" name="pack_note" rows="3">{{ payload.get('note','') }}</textarea>
+      </div>
+    {% endif %}
+
+    <div style="grid-column:1 / -1; display:flex; gap:10px; margin-top:10px;">
+      <button class="btn btn-primary" type="submit"
+              onclick="return confirm('Сохранить изменения? Если документ уже проходил этапы, процесс будет сброшен и начнётся заново.');">
+        Сохранить
+      </button>
+      <a class="btn btn-outline" href="{{ url_for('main.doc_detail', doc_id=d.id) }}">Отмена</a>
+    </div>
+
+  </form>
+</div>
+
+{% endblock %}
