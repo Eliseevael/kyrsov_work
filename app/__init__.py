@@ -55,8 +55,22 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(main_bp)
 
-    # ВАЖНО: импорт CLI только здесь, когда db уже создан
     from .cli import register_cli
     register_cli(app)
 
+    app.config["JSON_AS_ASCII"] = False
+    try:
+        app.json.ensure_ascii = False
+    except Exception:
+        pass
+
+    
+    # ВОТ СЮДА (это важно именно здесь, когда app уже собран)
+    with app.app_context():
+        db.create_all()              # создает таблицы, если их нет
+        ensure_user_columns()        # твои доп.колонки юзеров
+        from .security import ensure_schema
+        ensure_schema()              # доп.колонки документов под защиту
+
     return app
+

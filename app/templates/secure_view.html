@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .sec-card { background: #fff; border: 1px solid #eee; border-radius: 16px; padding: 18px; }
+  .sec-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .sec-item { flex: 1 1 240px; border: 1px solid #f0f0f0; border-radius: 14px; padding: 14px; }
+  .sec-title { font-weight: 700; margin-bottom: 6px; }
+  .sec-sub { color: #666; font-size: 14px; margin-bottom: 10px; }
+  .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #ddd; }
+  .ok { background: #eaffea; border-color: #bfe8bf; }
+  .bad { background: #ffecec; border-color: #f0b7b7; }
+  code { background: #f7f7f7; padding: 2px 6px; border-radius: 6px; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 14px; border-radius: 14px; overflow: auto; }
+  .muted { color:#666; font-size: 14px; }
+  .h1like { font-size: 22px; font-weight: 800; margin: 6px 0 2px; }
+  .btnrow { margin-top: 14px; display:flex; gap:10px; flex-wrap: wrap; }
+</style>
+
+<div class="sec-card">
+  <div class="h1like">Защищенный пакет #{{ msg.id }}</div>
+  <div class="muted">
+    От: <b>{{ env.meta.from_user }}</b> · Кому: <b>{{ env.meta.to_user }}</b> · Статус: <b>{{ msg.status }}</b>
+  </div>
+</div>
+
+<div style="height:14px;"></div>
+
+<div class="sec-card">
+  <div class="sec-title">Проверки</div>
+  <div class="sec-sub">Коротко: что проверили и что получилось</div>
+
+  <div class="sec-row">
+    {% set e = crypto_view.encryption %}
+    <div class="sec-item">
+      <div class="sec-title">{{ e.title }} <span class="pill {{ 'ok' if e.ok else 'bad' }}">{{ 'OK' if e.ok else 'Ошибка' }}</span></div>
+      <div class="sec-sub">{{ e.alg }}</div>
+      {% for k, v in e.details %}
+        <div class="muted">{{ k }}: <code>{{ v }}</code></div>
+      {% endfor %}
+      <div class="muted" style="margin-top:8px;">
+        {% if e.ok %}Документ расшифрован, тег MGM сошелся.{% else %}Расшифровка не подтверждена (тег MGM не сошелся).{% endif %}
+      </div>
+    </div>
+
+    {% set h = crypto_view.hash %}
+    <div class="sec-item">
+      <div class="sec-title">{{ h.title }} <span class="pill {{ 'ok' if h.ok else 'bad' }}">{{ 'OK' if h.ok else 'Ошибка' }}</span></div>
+      <div class="sec-sub">{{ h.alg }}</div>
+      {% for k, v in h.details %}
+        <div class="muted">{{ k }}: <code>{{ v }}</code></div>
+      {% endfor %}
+      {% if h.full %}
+      <details style="margin-top:10px;">
+        <summary class="muted">Показать полностью</summary>
+        <div style="margin-top:8px;"><code>{{ h.full }}</code></div>
+      </details>
+      {% endif %}
+      <div class="muted" style="margin-top:8px;">
+        {% if h.ok %}Хэш совпал, содержимое не меняли.{% else %}Хэш не совпал (возможна порча/подмена).{% endif %}
+      </div>
+    </div>
+
+    {% set m = crypto_view.mac %}
+    <div class="sec-item">
+      <div class="sec-title">{{ m.title }} <span class="pill {{ 'ok' if m.ok else 'bad' }}">{{ 'OK' if m.ok else 'Ошибка' }}</span></div>
+      <div class="sec-sub">{{ m.alg }}</div>
+      {% for k, v in m.details %}
+        <div class="muted">{{ k }}: <code>{{ v }}</code></div>
+      {% endfor %}
+      {% if m.full %}
+      <details style="margin-top:10px;">
+        <summary class="muted">Показать полностью</summary>
+        <div style="margin-top:8px;"><code>{{ m.full }}</code></div>
+      </details>
+      {% endif %}
+      <div class="muted" style="margin-top:8px;">
+        {% if m.ok %}Имитовставка сошлась, шифртекст целый.{% else %}Имитовставка не сошлась (возможна порча/подмена).{% endif %}
+      </div>
+    </div>
+
+    {% set s = crypto_view.sign %}
+    <div class="sec-item">
+      <div class="sec-title">{{ s.title }} <span class="pill {{ 'ok' if s.ok else 'bad' }}">{{ 'OK' if s.ok else 'Ошибка' }}</span></div>
+      <div class="sec-sub">{{ s.alg }}</div>
+      {% for k, v in s.details %}
+        <div class="muted">{{ k }}: <code>{{ v }}</code></div>
+      {% endfor %}
+      {% if s.full %}
+      <details style="margin-top:10px;">
+        <summary class="muted">Показать полностью</summary>
+        <div style="margin-top:8px;"><code>{{ s.full }}</code></div>
+      </details>
+      {% endif %}
+      <div class="muted" style="margin-top:8px;">
+        {% if s.ok %}Подпись верна, отправитель подтвержден.{% else %}Подпись не подтверждена.{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="height:14px;"></div>
+
+<div class="sec-card">
+  <div class="sec-title">Содержание</div>
+  <div class="sec-sub">Понятный предпросмотр того, что внутри пакета</div>
+
+  {% if preview %}
+    <div class="muted">
+      Тип: <b>{{ preview.doc_type }}</b> · Номер: <b>{{ preview.reg_number }}</b> · Стадия: <b>{{ preview.stage }}</b>
+    </div>
+    <div class="muted" style="margin-top:6px;">
+      Заголовок: <b>{{ preview.title }}</b>
+    </div>
+
+    {% if preview.confidentiality %}
+      <div style="margin-top:10px; padding:10px; border:1px dashed #ddd; border-radius:12px;">
+        <b>Гриф/пометка:</b> {{ preview.confidentiality }}
+      </div>
+    {% endif %}
+
+    <div style="height:10px;"></div>
+
+    {% set p = preview.payload or {} %}
+
+    {% if preview.doc_type == "letter" %}
+      <div><b>Кому:</b> {{ p.get("addressee") or "—" }}</div>
+      <div style="margin-top:8px;"><b>Текст:</b></div>
+      <div style="white-space: pre-wrap; border:1px solid #eee; padding:12px; border-radius:12px;">{{ p.get("body") or "—" }}</div>
+
+    {% elif preview.doc_type == "instruction" %}
+      <div><b>Цель:</b> {{ p.get("purpose") or "—" }}</div>
+      <div style="margin-top:6px;"><b>Область применения:</b> {{ p.get("scope") or "—" }}</div>
+      <div style="margin-top:8px;"><b>Порядок действий:</b></div>
+      <div style="white-space: pre-wrap; border:1px solid #eee; padding:12px; border-radius:12px;">{{ p.get("steps_raw") or "—" }}</div>
+      <div style="margin-top:8px;"><b>Ответственность:</b> {{ p.get("responsibility") or "—" }}</div>
+
+    {% elif preview.doc_type == "packet" %}
+      <div><b>Состав пакета:</b></div>
+      <div style="white-space: pre-wrap; border:1px solid #eee; padding:12px; border-radius:12px;">{{ p.get("list_raw") or "—" }}</div>
+      <div style="margin-top:8px;"><b>Примечание:</b> {{ p.get("note") or "—" }}</div>
+
+    {% else %}
+      <div class="muted">Неизвестный тип. Показываю как есть:</div>
+      <pre style="margin-top:10px;">{{ snapshot_pretty or "" }}</pre>
+    {% endif %}
+
+  {% else %}
+    <div class="muted">Содержимое не удалось расшифровать или проверить. Проверь блок “Проверки”.</div>
+  {% endif %}
+
+  <div class="btnrow">
+    <form method="post" action="{{ url_for('main.secure_accept', msg_id=msg.id) }}">
+      <button type="submit" class="btn btn-primary">Принять в систему</button>
+    </form>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.secure_inbox') }}">Назад</a>
+  </div>
+</div>
+
+<div style="height:14px;"></div>
+
+<div class="sec-card">
+  <details>
+    <summary class="sec-title">Технические данные (для отчета/проверки)</summary>
+    <div class="sec-sub">Если надо показать преподавателю или для отладки</div>
+
+    <div class="muted" style="margin-bottom:6px;">Envelope (пакет целиком):</div>
+    <pre>{{ envelope_pretty }}</pre>
+
+    {% if snapshot_pretty %}
+      <div class="muted" style="margin:12px 0 6px;">Snapshot (расшифрованное содержимое):</div>
+      <pre>{{ snapshot_pretty }}</pre>
+    {% endif %}
+  </details>
+</div>
+
+{% endblock %}

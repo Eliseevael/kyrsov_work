@@ -138,6 +138,25 @@
     </div>
   </div>
 </div>
+    <div class="card card-soft mt-3">
+    <div class="card-body">
+        <div class="fw-semibold mb-2">Защищенная отправка</div>
+
+        <form method="post" action="/docs/{{ d.id }}/secure/send" class="d-flex gap-2">
+        <select class="form-select form-select-sm" name="to_user_id" required>
+            <option value="" selected disabled>Выбрать получателя</option>
+            {% for u in users_for_send %}
+            <option value="{{ u.id }}">{{ u.username }} ({{ u.role }})</option>
+            {% endfor %}
+        </select>
+        <button class="btn btn-dark btn-sm btn-round" type="submit">Отправить</button>
+        </form>
+
+        <div class="text-secondary small mt-2">
+        Шифрование + ЭЦП + хеш + имитовставка.
+        </div>
+    </div>
+    </div>
 
 
   <div style="margin-top:18px;">

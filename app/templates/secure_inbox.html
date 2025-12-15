@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <div class="h5 mb-0">Защищенные входящие</div>
+    <div class="text-secondary small">Пакеты, которые пришли тебе в зашифрованном виде</div>
+  </div>
+</div>
+
+{% if not msgs %}
+  <div class="card card-soft">
+    <div class="card-body text-secondary">Пока пусто.</div>
+  </div>
+{% else %}
+  <div class="row g-3">
+    {% for m in msgs %}
+      <div class="col-12">
+        <div class="card card-soft">
+          <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+              <div class="fw-semibold">
+                {{ m.from_user.username }} → {{ m.to_user.username }}
+                <span class="badge badge-soft ms-2">{{ m.status }}</span>
+              </div>
+              <div class="text-secondary small">
+                {{ m.created_at.strftime("%d.%m.%Y %H:%M") }}
+                {% if m.document %}
+                  · {{ m.document.reg_number }} · {{ m.document.title }}
+                {% endif %}
+              </div>
+            </div>
+            <a class="btn btn-outline-dark btn-sm btn-round" href="/secure/{{ m.id }}">Открыть</a>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+{% endblock %}

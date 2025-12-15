@@ -2,20 +2,31 @@ from datetime import datetime
 import io
 import json
 from typing import Optional
+from base64 import b64decode
 from sqlalchemy import or_
-
+import base64
 from flask import Blueprint, render_template, request, redirect, url_for, abort, send_file
 from flask_login import login_required, current_user
 from docx import Document as DocxDocument
 
 from . import db
 from .decorators import roles_required
-from .models import User, Document, AuditEvent, DocumentType, Role
+from .models import User, Document, AuditEvent, DocumentType, Role, SecureMessage
 
-
+from .security import (
+    ensure_user_keys,
+    build_snapshot,
+    streebog256,
+    gost_sign,
+    gost_verify,
+    encrypt_for_recipient,
+    decrypt_for_recipient,
+    kuz_cmac,
+    b64e,
+    b64d,
+)
 
 main_bp = Blueprint("main", __name__)
-
 
 # -------------------- Справочники --------------------
 
@@ -103,8 +114,6 @@ STAGE_LABELS.update({
 
 
 # -------------------- Действия --------------------
-# roles: кто может нажать
-# to_role: кому документ должен прилететь во входящие
 
 ACTIONS = {
     # -------- ПИСЬМО --------
@@ -290,6 +299,34 @@ ACTIONS = {
 }
 
 
+# -------------------- JSON-хелперы --------------------
+
+def load_payload(d: Document) -> dict:
+    try:
+        return json.loads(d.content_json or "{}")
+    except Exception:
+        return {}
+
+
+def save_payload(d: Document, payload: dict) -> None:
+    d.content_json = json.dumps(payload, ensure_ascii=False)
+
+
+def set_assigned_role(d: Document, role: Optional[str], payload: Optional[dict] = None) -> None:
+    payload = payload if payload is not None else load_payload(d)
+    if role:
+        payload["_assigned_to_role"] = role
+    else:
+        payload.pop("_assigned_to_role", None)
+    save_payload(d, payload)
+    setattr(d, "assigned_to_role", role)
+
+
+def attach_runtime_assigned(d: Document, payload: Optional[dict] = None) -> None:
+    payload = payload if payload is not None else load_payload(d)
+    setattr(d, "assigned_to_role", payload.get("_assigned_to_role"))
+
+
 # -------------------- Вспомогательные функции --------------------
 
 def initial_stage(doc_type: str) -> str:
@@ -361,10 +398,6 @@ def make_reg_number(doc_type: str) -> str:
 
 
 def assigned_role_for_stage(doc_type: str, stage: str) -> Optional[str]:
-    """
-    Определяем, кому назначить документ на текущей стадии (для входящих).
-    Берём роли из доступных действий на этой стадии и выбираем приоритетно.
-    """
     candidates = []
     for _aid, meta in ACTIONS.items():
         if doc_type in meta.get("types", []) and stage in meta.get("from", []):
@@ -380,52 +413,36 @@ def assigned_role_for_stage(doc_type: str, stage: str) -> Optional[str]:
     return candidates[0]
 
 
-def reset_workflow_to_initial(d: Document):
-    d.stage = initial_stage(d.doc_type)
-    d.assigned_to_role = assigned_role_for_stage(d.doc_type, d.stage)
-
-
 def set_assignment_after_transition(d: Document, meta: dict):
-    """
-    Назначаем "кому дальше" (для входящих).
-    meta['to_role'] — целевая роль.
-    Если to_role не задана, пробуем вычислить по текущей стадии.
-    На финальных стадиях очищаем назначение.
-    """
-    next_role = meta.get("to_role")
-
     if is_terminal(d.stage) or d.stage == "deleted":
-        d.assigned_to_role = None
+        set_assigned_role(d, None)
         return
 
+    next_role = meta.get("to_role")
     if next_role is None:
         next_role = assigned_role_for_stage(d.doc_type, d.stage)
 
-    d.assigned_to_role = next_role
+    set_assigned_role(d, next_role)
 
 
 # -------------------- Роуты --------------------
+
 @main_bp.route("/users")
 @login_required
 @roles_required(Role.AUDITOR, Role.APPROVER)
 def users():
-    users = User.query.order_by(User.id.asc()).all()
+    users_list = User.query.order_by(User.id.asc()).all()
     return render_template(
         "users.html",
         me=current_user,
-        users=users,
+        users=users_list,
         ROLE_TITLES=ROLE_TITLES,
     )
-
-
-
-
 
 
 @main_bp.route("/journal")
 @login_required
 def journal():
-    # доступ только аудитору и гендиру (approver)
     if current_user.role not in [Role.AUDITOR, Role.APPROVER]:
         abort(403)
 
@@ -502,26 +519,28 @@ def journal():
 @main_bp.route("/")
 @login_required
 def index():
-    active_q = Document.query.filter(Document.stage != "deleted")
-
-    inbox_docs = (
-        active_q
-        .filter(Document.assigned_to_role == current_user.role)
-        .filter(~Document.stage.in_(["archived", "destroyed", "declassified"]))
+    active_docs = (
+        Document.query
+        .filter(Document.stage != "deleted")
         .order_by(Document.created_at.desc())
         .all()
     )
 
-    docs = (
-        active_q
-        .order_by(Document.created_at.desc())
-        .all()
-    )
+    for d in active_docs:
+        attach_runtime_assigned(d)
+
+    inbox_docs = []
+    for d in active_docs:
+        if d.stage in ("archived", "destroyed", "declassified"):
+            continue
+        assigned = getattr(d, "assigned_to_role", None)
+        if assigned and assigned == current_user.role:
+            inbox_docs.append(d)
 
     return render_template(
         "index.html",
         inbox_docs=inbox_docs,
-        docs=docs,
+        docs=active_docs,
         me=current_user,
         DOC_TYPE_LABELS=DOC_TYPE_LABELS,
         STAGE_LABELS=STAGE_LABELS
@@ -569,6 +588,7 @@ def new_doc():
         payload["note"] = request.form.get("pack_note", "").strip()
 
     st = initial_stage(doc_type)
+    payload["_assigned_to_role"] = assigned_role_for_stage(doc_type, st)
 
     d = Document(
         doc_type=doc_type,
@@ -578,19 +598,17 @@ def new_doc():
         created_by_id=current_user.id,
         content_json=json.dumps(payload, ensure_ascii=False),
         confidentiality=conf or None,
-        assigned_to_role=assigned_role_for_stage(doc_type, st)
     )
     db.session.add(d)
     db.session.flush()
 
-    e = AuditEvent(
+    db.session.add(AuditEvent(
         document_id=d.id,
         actor_id=current_user.id,
         action="Создан документ",
         from_stage=None,
         to_stage=d.stage
-    )
-    db.session.add(e)
+    ))
     db.session.commit()
 
     return redirect(url_for("main.doc_detail", doc_id=d.id))
@@ -604,7 +622,6 @@ def doc_detail(doc_id: int):
     if d.stage == "deleted":
         abort(404)
 
-    # уничтоженные показываем в списке, но не открываем
     if d.stage == "destroyed":
         return redirect(url_for("main.index"))
 
@@ -616,12 +633,15 @@ def doc_detail(doc_id: int):
     )
 
     progress, step_now, step_total, stage_label = calc_progress(d.doc_type, d.stage)
-    actions = available_actions(d.doc_type, d.stage, current_user.role, d.assigned_to_role)
+    payload = load_payload(d)
 
-    try:
-        payload = json.loads(d.content_json or "{}")
-    except Exception:
-        payload = {}
+    if not payload.get("_assigned_to_role") and not is_terminal(d.stage) and d.stage != "deleted":
+        payload["_assigned_to_role"] = assigned_role_for_stage(d.doc_type, d.stage)
+        save_payload(d, payload)
+        db.session.commit()
+
+    attach_runtime_assigned(d, payload)
+    actions = available_actions(d.doc_type, d.stage, current_user.role, getattr(d, "assigned_to_role", None))
 
     ins_steps = [x.strip() for x in (payload.get("steps_raw") or "").splitlines() if x.strip()]
     pack_items = [x.strip("-• \t") for x in (payload.get("list_raw") or "").splitlines() if x.strip()]
@@ -642,6 +662,8 @@ def doc_detail(doc_id: int):
             "actor_role": actor_role,
         })
 
+    users_for_send = User.query.filter(User.id != current_user.id).order_by(User.username.asc()).all()
+
     return render_template(
         "doc_detail.html",
         me=current_user,
@@ -658,6 +680,7 @@ def doc_detail(doc_id: int):
         ins_steps=ins_steps,
         pack_items=pack_items,
         history=history,
+        users_for_send=users_for_send,
     )
 
 
@@ -669,14 +692,10 @@ def edit_doc(doc_id: int):
     if d.stage in ("deleted", "destroyed", "archived", "declassified"):
         abort(403)
 
-    # редактирует только создатель
     if d.created_by_id != current_user.id:
         abort(403)
 
-    try:
-        payload = json.loads(d.content_json or "{}")
-    except Exception:
-        payload = {}
+    payload = load_payload(d)
 
     if request.method == "GET":
         return render_template(
@@ -724,13 +743,14 @@ def edit_doc(doc_id: int):
         new_payload["note"] = request.form.get("pack_note", "").strip()
 
     d.title = title
-    d.content_json = json.dumps(new_payload, ensure_ascii=False)
 
     init_st = initial_stage(d.doc_type)
 
-    # если документ успел уйти дальше старта, то сбрасываем процесс
     if old_stage != init_st:
-        reset_workflow_to_initial(d)
+        d.stage = init_st
+        new_payload["_assigned_to_role"] = assigned_role_for_stage(d.doc_type, d.stage)
+        d.content_json = json.dumps(new_payload, ensure_ascii=False)
+
         e = AuditEvent(
             document_id=d.id,
             actor_id=current_user.id,
@@ -739,8 +759,9 @@ def edit_doc(doc_id: int):
             to_stage=d.stage
         )
     else:
-        # на стартовой стадии просто фиксируем изменение
-        d.assigned_to_role = assigned_role_for_stage(d.doc_type, d.stage)
+        new_payload["_assigned_to_role"] = assigned_role_for_stage(d.doc_type, d.stage)
+        d.content_json = json.dumps(new_payload, ensure_ascii=False)
+
         e = AuditEvent(
             document_id=d.id,
             actor_id=current_user.id,
@@ -760,22 +781,23 @@ def edit_doc(doc_id: int):
 def doc_delete(doc_id: int):
     d = Document.query.get_or_404(doc_id)
 
-    # уничтоженное не удаляем
     if d.stage == "destroyed":
         return redirect(url_for("main.index"))
 
     from_stage = d.stage
     d.stage = "deleted"
-    d.assigned_to_role = None
 
-    e = AuditEvent(
+    payload = load_payload(d)
+    payload.pop("_assigned_to_role", None)
+    save_payload(d, payload)
+
+    db.session.add(AuditEvent(
         document_id=d.id,
         actor_id=current_user.id,
         action="Удалён наблюдателем",
         from_stage=from_stage,
         to_stage="deleted",
-    )
-    db.session.add(e)
+    ))
     db.session.commit()
 
     return redirect(url_for("main.index"))
@@ -798,7 +820,9 @@ def doc_action(doc_id: int, action_id: str):
     if current_user.role not in meta.get("roles", []):
         abort(403)
 
-    if d.assigned_to_role and d.assigned_to_role != current_user.role:
+    payload = load_payload(d)
+    assigned_to = payload.get("_assigned_to_role")
+    if assigned_to and assigned_to != current_user.role:
         abort(403)
 
     from_stage = d.stage
@@ -806,17 +830,15 @@ def doc_action(doc_id: int, action_id: str):
 
     set_assignment_after_transition(d, meta)
 
-    e = AuditEvent(
+    db.session.add(AuditEvent(
         document_id=d.id,
         actor_id=current_user.id,
         action=meta.get("label", action_id),
         from_stage=from_stage,
         to_stage=d.stage
-    )
-    db.session.add(e)
+    ))
     db.session.commit()
 
-    # если уничтожили, не пытаемся открыть карточку
     if d.stage == "destroyed":
         return redirect(url_for("main.index"))
 
@@ -827,11 +849,7 @@ def doc_action(doc_id: int, action_id: str):
 @login_required
 def download_docx(doc_id: int):
     d = Document.query.get_or_404(doc_id)
-
-    try:
-        payload = json.loads(d.content_json or "{}")
-    except Exception:
-        payload = {}
+    payload = load_payload(d)
 
     doc = DocxDocument()
 
@@ -912,3 +930,280 @@ def download_docx(doc_id: int):
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
+
+@main_bp.post("/docs/<int:doc_id>/secure/send")
+@login_required
+def secure_send(doc_id: int):
+    d = Document.query.get_or_404(doc_id)
+
+    if d.stage == "deleted":
+        abort(404)
+
+    to_user_id = int(request.form.get("to_user_id") or 0)
+    to_user = User.query.get_or_404(to_user_id)
+
+    sender_keys = ensure_user_keys(current_user)
+    recipient_keys = ensure_user_keys(to_user)
+
+    payload = load_payload(d)
+    snapshot = build_snapshot(d, payload)
+
+    h = streebog256(snapshot)
+
+    d_priv = int(sender_keys.sign_d)
+    sig = gost_sign(snapshot, d_priv)
+
+    aad_obj = {"from": current_user.username, "to": to_user.username, "doc_id": d.id}
+    aad = json.dumps(aad_obj, ensure_ascii=False, sort_keys=True).encode("utf-8")
+
+    key_bytes = bytes.fromhex(recipient_keys.enc_key_hex)
+    enc = encrypt_for_recipient(snapshot, key_bytes, aad)
+
+    mac = kuz_cmac(key_bytes, b64d(enc["ct"]))
+
+    envelope = {
+        "v": 1,
+        "meta": {
+            "from_user": current_user.username,
+            "to_user": to_user.username,
+            "doc_ref": {"id": d.id, "reg_number": d.reg_number, "title": d.title},
+        },
+        "crypto": {
+            "hash": {"alg": "streebog-256", "value": b64e(h)},
+            "sign": {
+                "alg": "gost-like-demo",
+                "qx": sender_keys.sign_qx,
+                "qy": sender_keys.sign_qy,
+                "sig": b64e(sig),
+            },
+            "enc": enc,
+            "imito": {"alg": "kuz-cmac-or-fallback", "value": b64e(mac)},
+        },
+    }
+
+    m = SecureMessage(
+        from_user_id=current_user.id,
+        to_user_id=to_user.id,
+        document_id=d.id,
+        envelope_json=json.dumps(envelope, ensure_ascii=False),
+        status="new",
+    )
+    db.session.add(m)
+
+    db.session.add(AuditEvent(
+        document_id=d.id,
+        actor_id=current_user.id,
+        action=f"Отправлен защищённый пакет пользователю {to_user.username}",
+        from_stage=d.stage,
+        to_stage=d.stage,
+    ))
+    db.session.commit()
+
+    return redirect(url_for("main.doc_detail", doc_id=d.id))
+
+
+@main_bp.route("/secure/inbox")
+@login_required
+def secure_inbox():
+    msgs = (
+        SecureMessage.query
+        .filter_by(to_user_id=current_user.id)
+        .order_by(SecureMessage.created_at.desc())
+        .all()
+    )
+    return render_template("secure_inbox.html", me=current_user, msgs=msgs)
+
+
+@main_bp.route("/secure/<int:msg_id>")
+@login_required
+def secure_view(msg_id: int):
+    msg = SecureMessage.query.get_or_404(msg_id)
+    if msg.to_user_id != current_user.id and msg.from_user_id != current_user.id:
+        abort(403)
+
+    env = json.loads(msg.envelope_json)
+
+    # ключи получателя
+    recipient_keys = ensure_user_keys(current_user)
+    key_bytes = bytes.fromhex(recipient_keys.enc_key_hex)
+
+    # расшифровка + проверка MGM-тега
+    pt, ok_mgm = decrypt_for_recipient(env["crypto"]["enc"], key_bytes)
+
+    # проверка имитовставки
+    mac_expected_b64 = env.get("crypto", {}).get("imito", {}).get("value", "")
+    ct_b64 = env.get("crypto", {}).get("enc", {}).get("ct", "")
+    mac_real = kuz_cmac(key_bytes, b64decode(ct_b64)) if ct_b64 else b""
+    ok_mac = (mac_real == base64.b64decode(mac_expected_b64)) if mac_expected_b64 else False
+
+    # проверка хеша
+    h_expected_b64 = env.get("crypto", {}).get("hash", {}).get("value", "")
+    h_real = streebog256(pt) if pt else b""
+    ok_hash = (h_real == base64.b64decode(h_expected_b64)) if h_expected_b64 else False
+
+    # проверка подписи
+    sig_b64 = env.get("crypto", {}).get("sign", {}).get("sig", "")
+    qx = int(env.get("crypto", {}).get("sign", {}).get("qx", 0) or 0)
+    qy = int(env.get("crypto", {}).get("sign", {}).get("qy", 0) or 0)
+    sig = base64.b64decode(sig_b64) if sig_b64 else b""
+    ok_sign = gost_verify(pt, sig, qx, qy) if pt and sig and qx and qy else False
+
+    snapshot = None
+    if ok_mgm and pt:
+        try:
+            snapshot = json.loads(pt.decode("utf-8"))
+        except Exception:
+            snapshot = None
+
+    # пометим как opened
+    if msg.status == "new" and msg.to_user_id == current_user.id:
+        msg.status = "opened"
+        msg.opened_at = datetime.utcnow()
+        db.session.commit()
+
+    def short_val(s: str, head: int = 14, tail: int = 14) -> str:
+        if not s:
+            return "—"
+        if len(s) <= head + tail + 1:
+            return s
+        return f"{s[:head]}…{s[-tail:]}"
+
+    # красивый “паспорт крипты”
+    enc_obj = env.get("crypto", {}).get("enc", {}) or {}
+    nonce_b64 = enc_obj.get("nonce") or enc_obj.get("iv") or ""
+    tag_b64 = enc_obj.get("tag") or enc_obj.get("mac") or ""
+    ct_len = 0
+    try:
+        ct_len = len(base64.b64decode(ct_b64)) if ct_b64 else 0
+    except Exception:
+        ct_len = 0
+
+    crypto_view = {
+        "encryption": {
+            "title": "Шифрование",
+            "alg": "Кузнечик (режим MGM)",
+            "ok": ok_mgm,
+            "details": [
+                ("Шифртекст", f"{ct_len} байт"),
+                ("Нонс", short_val(nonce_b64) if nonce_b64 else "—"),
+                ("Тег MGM", short_val(tag_b64) if tag_b64 else "—"),
+            ],
+        },
+        "mac": {
+            "title": "Имитовставка",
+            "alg": "CMAC-Кузнечик",
+            "ok": ok_mac,
+            "details": [
+                ("Значение", short_val(mac_expected_b64)),
+            ],
+            "full": mac_expected_b64,
+        },
+        "hash": {
+            "title": "Хэш",
+            "alg": "Стрибог-256",
+            "ok": ok_hash,
+            "details": [
+                ("Значение", short_val(h_expected_b64)),
+            ],
+            "full": h_expected_b64,
+        },
+        "sign": {
+            "title": "ЭЦП",
+            "alg": "ГОСТ 34.10 (подпись)",
+            "ok": ok_sign,
+            "details": [
+                ("Подпись", short_val(sig_b64)),
+                ("Открытый ключ", f"Q=({qx}, {qy})" if qx and qy else "—"),
+            ],
+            "full": sig_b64,
+        },
+    }
+
+    # предпросмотр содержимого “человеческим языком”
+    preview = None
+    if snapshot:
+        meta = snapshot.get("meta", {}) or {}
+        payload = snapshot.get("payload", {}) or {}
+        preview = {
+            "doc_type": meta.get("doc_type"),
+            "title": meta.get("title"),
+            "reg_number": meta.get("reg_number"),
+            "stage": meta.get("stage"),
+            "created_at": meta.get("created_at"),
+            "confidentiality": meta.get("confidentiality"),
+            "payload": payload,
+        }
+
+    envelope_pretty = json.dumps(env, ensure_ascii=False, indent=2)
+    snapshot_pretty = json.dumps(snapshot, ensure_ascii=False, indent=2) if snapshot else None
+
+    return render_template(
+        "secure_view.html",
+        me=current_user,
+        msg=msg,
+        env=env,
+        preview=preview,
+        crypto_view=crypto_view,
+        ok_mgm=ok_mgm,
+        ok_mac=ok_mac,
+        ok_hash=ok_hash,
+        ok_sign=ok_sign,
+        envelope_pretty=envelope_pretty,
+        snapshot_pretty=snapshot_pretty,
+    )
+
+
+
+@main_bp.post("/secure/<int:msg_id>/accept")
+@login_required
+def secure_accept(msg_id: int):
+    msg = SecureMessage.query.get_or_404(msg_id)
+    if msg.to_user_id != current_user.id:
+        abort(403)
+
+    env = json.loads(msg.envelope_json)
+
+    recipient_keys = ensure_user_keys(current_user)
+    key_bytes = bytes.fromhex(recipient_keys.enc_key_hex)
+
+    pt, ok_mgm = decrypt_for_recipient(env["crypto"]["enc"], key_bytes)
+    if not ok_mgm:
+        abort(400)
+
+    snap = json.loads(pt.decode("utf-8"))
+    meta = snap.get("meta", {})
+    payload = snap.get("payload", {})
+
+    doc_type = meta.get("doc_type")
+    title = meta.get("title") or "(без названия)"
+
+    st = initial_stage(doc_type)
+
+    # важно: назначение в JSON, чтобы не требовать колонки assigned_to_role
+    payload["_assigned_to_role"] = assigned_role_for_stage(doc_type, st)
+
+    d = Document(
+        doc_type=doc_type,
+        title=title,
+        reg_number=make_reg_number(doc_type),
+        stage=st,
+        created_by_id=current_user.id,
+        content_json=json.dumps(payload, ensure_ascii=False),
+        confidentiality=meta.get("confidentiality") or None,
+    )
+    db.session.add(d)
+    db.session.flush()
+
+    db.session.add(AuditEvent(
+        document_id=d.id,
+        actor_id=current_user.id,
+        action=f"Принят защищённый пакет (сообщение #{msg.id})",
+        from_stage=None,
+        to_stage=d.stage
+    ))
+
+    msg.status = "accepted"
+    db.session.commit()
+
+    return redirect(url_for("main.doc_detail", doc_id=d.id))
